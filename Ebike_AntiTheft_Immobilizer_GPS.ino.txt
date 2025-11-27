@@ -1,0 +1,87 @@
+// Ebike_AntiTheft_Immobilizer_GPS.ino
+// Basic anti-theft immobilizer with GPS logging (Arduino + GPS module NEO-6M)
+// Immobilizer cuts motor enable (relay/MOSFET). GPS data logged to Serial (can be adapted to SD or GSM).
+
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+
+const int armSwitchPin = 2;     // toggle arm/disarm (INPUT_PULLUP)
+const int immobilizePin = 8;    // output to cut motor enable (relay/MOSFET)
+const int buzzerPin = 9;
+
+SoftwareSerial gpsSerial(10, 11); // RX, TX to GPS module
+TinyGPSPlus gps;
+
+bool armed = false;
+unsigned long lastLog = 0;
+
+void setup() {
+  pinMode(armSwitchPin, INPUT_PULLUP);
+  pinMode(immobilizePin, OUTPUT);
+  pinMode(buzzerPin, OUTPUT);
+  digitalWrite(immobilizePin, LOW); // motor enabled by default (LOW = enabled) — adapt to wiring
+  digitalWrite(buzzerPin, LOW);
+  Serial.begin(9600);
+  gpsSerial.begin(9600);
+  Serial.println("E-Bike Anti-Theft Immobilizer + GPS");
+}
+
+void loop() {
+  // Read GPS data
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
+  }
+
+  // Read arm switch (active LOW)
+  if (digitalRead(armSwitchPin) == LOW) {
+    delay(50); // debounce
+    if (digitalRead(armSwitchPin) == LOW) {
+      armed = !armed;
+      Serial.print("Armed set to: ");
+      Serial.println(armed);
+      delay(500); // avoid toggling too fast
+    }
+  }
+
+  // If armed and motion detected (speed > threshold) or movement detected, immobilize
+  double speedKmh = gps.speed.kmph();
+  bool moving = (speedKmh > 3.0); // ~3 km/h threshold
+
+  if (armed && moving) {
+    // Trigger immobilize: cut motor enable
+    digitalWrite(immobilizePin, HIGH); // HIGH = disable motor (adapt to wiring)
+    // Audible alert
+    digitalWrite(buzzerPin, HIGH);
+    // Log GPS coordinates every 10 seconds
+    if (millis() - lastLog > 10000) {
+      lastLog = millis();
+      if (gps.location.isValid()) {
+        Serial.print("ALERT! Location: ");
+        Serial.print(gps.location.lat(), 6);
+        Serial.print(", ");
+        Serial.println(gps.location.lng(), 6);
+      } else {
+        Serial.println("ALERT! Location: (No GPS fix)");
+      }
+    }
+  } else {
+    // Normal operation
+    digitalWrite(immobilizePin, LOW); // allow motor
+    digitalWrite(buzzerPin, LOW);
+  }
+
+  // Optional: print small GPS status periodically
+  if (millis() % 5000 < 200) {
+    if (gps.location.isValid()) {
+      Serial.print("GPS: ");
+      Serial.print(gps.location.lat(), 6);
+      Serial.print(", ");
+      Serial.print(gps.location.lng(), 6);
+      Serial.print(" | Spd:");
+      Serial.print(gps.speed.kmph());
+      Serial.println("km/h");
+    } else {
+      Serial.println("GPS waiting for fix...");
+    }
+  }
+}
